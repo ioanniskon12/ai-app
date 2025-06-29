@@ -1,6 +1,6 @@
 // pages/api/admin/bookings/[id].js
 import { getServerSession } from "next-auth";
-import { authOptions } from "../../auth/[...nextauth]";
+import { authOptions } from "@/pages/api/auth/[...nextauth]";
 import dbConnect from "@/lib/mongodb";
 import Booking from "@/models/Booking"; // Adjust the import path as necessary
 
