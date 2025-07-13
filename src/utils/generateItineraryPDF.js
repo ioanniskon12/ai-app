@@ -1,315 +1,420 @@
-// utils/generateItineraryPDF.js
+// utils/generateItineraryPDF.js - Complete PDF Generation Implementation
 import jsPDF from "jspdf";
 
-export const generateItineraryPDF = (trip) => {
+export function generateItineraryPDF(tripData) {
   const doc = new jsPDF();
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const margins = { top: 20, bottom: 20, left: 20, right: 20 };
+  const contentWidth = pageWidth - margins.left - margins.right;
 
-  // Header
-  doc.setFontSize(24);
-  doc.setTextColor(102, 126, 234);
-  doc.text("Trip Itinerary", 20, 20);
+  let yPosition = margins.top;
 
-  // Booking reference if available
-  if (trip._id) {
-    doc.setFontSize(10);
-    doc.setTextColor(107, 114, 128);
-    doc.text(`Booking Reference: ${trip._id}`, 20, 30);
-  }
-
-  // Destination
-  doc.setFontSize(20);
-  doc.setTextColor(31, 41, 55);
-  doc.text(trip.Destination || trip.destination, 20, 45);
-
-  // Trip details
-  doc.setFontSize(12);
-  doc.setTextColor(75, 85, 99);
-  let y = 60;
-
-  // Format dates
-  const formatDate = (dateStr) => {
-    return new Date(dateStr).toLocaleDateString("en-US", {
-      weekday: "short",
-      month: "long",
-      day: "numeric",
-      year: "numeric",
-    });
+  // Helper functions
+  const addNewPageIfNeeded = (requiredSpace = 30) => {
+    if (yPosition + requiredSpace > pageHeight - margins.bottom) {
+      doc.addPage();
+      yPosition = margins.top;
+      return true;
+    }
+    return false;
   };
 
-  const startDate = trip.StartDate || trip.startDate;
-  const endDate = trip.EndDate || trip.endDate;
-  const start = formatDate(startDate);
-  const end = formatDate(endDate);
+  const drawDivider = () => {
+    doc.setDrawColor(200, 200, 200);
+    doc.line(margins.left, yPosition, pageWidth - margins.right, yPosition);
+    yPosition += 10;
+  };
 
-  doc.text(`Dates: ${start} - ${end}`, 20, y);
-  y += 8;
-  doc.text(`Duration: ${trip.Duration || trip.duration}`, 20, y);
-  y += 12;
+  // Header with gradient effect
+  doc.setFillColor(102, 126, 234);
+  doc.rect(0, 0, pageWidth, 40, "F");
 
-  // Passengers if available
-  if (trip.passengers) {
+  // Title
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(24);
+  doc.setFont(undefined, "bold");
+  doc.text("AI Travel Planner", pageWidth / 2, 18, { align: "center" });
+
+  doc.setFontSize(12);
+  doc.setFont(undefined, "normal");
+  doc.text("Your Personalized Trip Itinerary", pageWidth / 2, 28, {
+    align: "center",
+  });
+
+  yPosition = 55;
+
+  // Trip Overview Section
+  doc.setTextColor(30, 30, 30);
+  doc.setFontSize(18);
+  doc.setFont(undefined, "bold");
+  doc.text("Trip Overview", margins.left, yPosition);
+  yPosition += 15;
+
+  // Destination Header
+  doc.setFillColor(245, 247, 250);
+  doc.rect(margins.left, yPosition - 5, contentWidth, 25, "F");
+
+  doc.setFontSize(16);
+  doc.setTextColor(102, 126, 234);
+  doc.text(
+    tripData.Destination || tripData.destination,
+    pageWidth / 2,
+    yPosition + 8,
+    { align: "center" }
+  );
+  yPosition += 30;
+
+  // Trip Details Grid
+  doc.setFontSize(10);
+  doc.setTextColor(107, 114, 128);
+
+  const details = [
+    { label: "Duration:", value: tripData.Duration || tripData.duration },
+    {
+      label: "Dates:",
+      value: `${formatDate(tripData.StartDate || tripData.startDate)} - ${formatDate(tripData.EndDate || tripData.endDate)}`,
+    },
+    { label: "Month:", value: tripData.Month || tripData.month },
+    { label: "Total Price:", value: `$${tripData.Price || tripData.price}` },
+  ];
+
+  const detailsPerRow = 2;
+  const columnWidth = contentWidth / detailsPerRow;
+
+  details.forEach((detail, index) => {
+    const col = index % detailsPerRow;
+    const row = Math.floor(index / detailsPerRow);
+    const xPos = margins.left + col * columnWidth;
+    const yPos = yPosition + row * 15;
+
+    doc.setFont(undefined, "bold");
+    doc.text(detail.label, xPos, yPos);
+    doc.setFont(undefined, "normal");
+    doc.text(detail.value, xPos + 30, yPos);
+  });
+
+  yPosition += Math.ceil(details.length / detailsPerRow) * 15 + 10;
+  drawDivider();
+
+  // Passengers Section (if available)
+  if (tripData.passengers) {
     doc.setFontSize(14);
-    doc.setTextColor(31, 41, 55);
-    doc.text("Travelers:", 20, y);
-    y += 8;
-    doc.setFontSize(12);
-    doc.setTextColor(75, 85, 99);
-    if (trip.passengers.adults) {
-      doc.text(`Adults: ${trip.passengers.adults}`, 25, y);
-      y += 8;
-    }
-    if (trip.passengers.children) {
-      doc.text(`Children: ${trip.passengers.children}`, 25, y);
-      y += 8;
-    }
-    if (trip.passengers.infants) {
-      doc.text(`Infants: ${trip.passengers.infants}`, 25, y);
-      y += 8;
-    }
-    y += 4;
-  }
+    doc.setFont(undefined, "bold");
+    doc.setTextColor(30, 30, 30);
+    doc.text("Travelers", margins.left, yPosition);
+    yPosition += 10;
 
-  // Reason for visiting
-  if (trip.Reason || trip.reason) {
-    doc.setFontSize(14);
-    doc.setTextColor(31, 41, 55);
-    doc.text("Why Visit:", 20, y);
-    y += 8;
-    doc.setFontSize(11);
-    doc.setTextColor(75, 85, 99);
-    const reason = trip.Reason || trip.reason;
-    const reasonLines = doc.splitTextToSize(reason, 170);
-    doc.text(reasonLines, 20, y);
-    y += reasonLines.length * 6 + 10;
-  }
+    doc.setFontSize(10);
+    doc.setFont(undefined, "normal");
+    doc.setTextColor(107, 114, 128);
 
-  // Check if we need a new page
-  if (y > 240) {
-    doc.addPage();
-    y = 20;
+    const passengerInfo = [];
+    if (tripData.passengers.adults)
+      passengerInfo.push(
+        `${tripData.passengers.adults} Adult${tripData.passengers.adults > 1 ? "s" : ""}`
+      );
+    if (tripData.passengers.children)
+      passengerInfo.push(
+        `${tripData.passengers.children} Child${tripData.passengers.children > 1 ? "ren" : ""}`
+      );
+    if (tripData.passengers.infants)
+      passengerInfo.push(
+        `${tripData.passengers.infants} Infant${tripData.passengers.infants > 1 ? "s" : ""}`
+      );
+
+    doc.text(passengerInfo.join(", "), margins.left, yPosition);
+    yPosition += 15;
+    drawDivider();
   }
 
   // Flight Information
-  const flight = trip.Flight || trip.flight;
-  if (flight) {
-    doc.setFontSize(14);
-    doc.setTextColor(31, 41, 55);
-    doc.text("Flight Information:", 20, y);
-    y += 8;
-    doc.setFontSize(11);
-    doc.setTextColor(75, 85, 99);
-    if (flight.Outbound || flight.outbound) {
-      doc.text(`Outbound: ${flight.Outbound || flight.outbound}`, 25, y);
-      y += 6;
-    }
-    if (flight.Return || flight.return) {
-      doc.text(`Return: ${flight.Return || flight.return}`, 25, y);
-      y += 6;
-    }
-    y += 6;
-  }
-
-  // Check if we need a new page
-  if (y > 240) {
-    doc.addPage();
-    y = 20;
-  }
-
-  // Accommodation
-  const hotel = trip.Hotel || trip.hotel;
-  if (hotel) {
-    doc.setFontSize(14);
-    doc.setTextColor(31, 41, 55);
-    doc.text("Accommodation:", 20, y);
-    y += 8;
-    doc.setFontSize(11);
-    doc.setTextColor(75, 85, 99);
-    doc.text(hotel, 25, y);
-    y += 12;
-  }
-
-  // Check if we need a new page
-  if (y > 220) {
-    doc.addPage();
-    y = 20;
-  }
-
-  // Activities
-  const activities = trip.selectedActivities || trip.activities;
-  if (activities?.length > 0) {
-    doc.setFontSize(14);
-    doc.setTextColor(31, 41, 55);
-    doc.text("Selected Activities:", 20, y);
-    y += 8;
-    doc.setFontSize(11);
-    doc.setTextColor(75, 85, 99);
-
-    activities.forEach((act) => {
-      // Check if we need a new page
-      if (y > 270) {
-        doc.addPage();
-        y = 20;
-      }
-
-      const activityName = act.name || act;
-      const activityPrice = act.price ? ` - $${act.price}` : "";
-      doc.text(`• ${activityName}${activityPrice}`, 25, y);
-      y += 6;
-    });
-    y += 10;
-  }
-
-  // Check if we need a new page for price
-  if (y > 250) {
-    doc.addPage();
-    y = 20;
-  }
-
-  // Total Price
-  const price = trip.Price || trip.price;
-  if (price) {
-    doc.setFontSize(16);
-    doc.setTextColor(102, 126, 234);
-    doc.text(`Total Price: ${price}`, 20, y);
-    y += 15;
-  }
-
-  // Travel Tips Section
-  if (y > 200) {
-    doc.addPage();
-    y = 20;
-  }
-
+  addNewPageIfNeeded(80);
   doc.setFontSize(14);
-  doc.setTextColor(31, 41, 55);
-  doc.text("Travel Tips:", 20, y);
-  y += 8;
-  doc.setFontSize(10);
-  doc.setTextColor(75, 85, 99);
+  doc.setFont(undefined, "bold");
+  doc.setTextColor(30, 30, 30);
+  doc.text("Flight Information", margins.left, yPosition);
+  yPosition += 10;
 
-  const tips = [
-    "• Check passport validity (6+ months from travel date)",
-    "• Consider travel insurance",
-    "• Download offline maps",
-    "• Keep digital copies of documents",
-  ];
-
-  // Add child-specific tips if traveling with children
-  const hasChildren =
-    trip.passengers &&
-    (trip.passengers.children > 0 || trip.passengers.infants > 0);
-
-  if (hasChildren) {
-    tips.push("• Pack extra supplies for children");
-    tips.push("• Check airline policies for minors");
-    tips.push("• Book child-friendly restaurants");
+  // Outbound Flight
+  if (tripData.Flight?.Outbound) {
+    drawFlightCard(
+      doc,
+      tripData.Flight.Outbound,
+      "Outbound Flight",
+      margins,
+      yPosition,
+      contentWidth
+    );
+    yPosition += 50;
   }
 
-  tips.forEach((tip) => {
-    if (y > 270) {
-      doc.addPage();
-      y = 20;
+  // Return Flight
+  if (tripData.Flight?.Return) {
+    addNewPageIfNeeded(60);
+    drawFlightCard(
+      doc,
+      tripData.Flight.Return,
+      "Return Flight",
+      margins,
+      yPosition,
+      contentWidth
+    );
+    yPosition += 50;
+  }
+
+  drawDivider();
+
+  // Hotel Information
+  addNewPageIfNeeded(80);
+  doc.setFontSize(14);
+  doc.setFont(undefined, "bold");
+  doc.setTextColor(30, 30, 30);
+  doc.text("Accommodation", margins.left, yPosition);
+  yPosition += 10;
+
+  if (tripData.Hotel) {
+    const hotel = tripData.Hotel;
+
+    // Hotel name and rating
+    doc.setFontSize(12);
+    doc.setFont(undefined, "bold");
+    doc.text(hotel.name, margins.left, yPosition);
+
+    // Draw star rating
+    if (hotel.rating) {
+      const stars =
+        "★".repeat(Math.floor(hotel.rating)) +
+        "☆".repeat(5 - Math.floor(hotel.rating));
+      doc.setTextColor(251, 191, 36);
+      doc.text(
+        stars,
+        margins.left + doc.getTextWidth(hotel.name) + 5,
+        yPosition
+      );
     }
-    doc.text(tip, 20, y);
-    y += 6;
-  });
+    yPosition += 8;
+
+    // Hotel details
+    doc.setFont(undefined, "normal");
+    doc.setTextColor(107, 114, 128);
+    doc.setFontSize(10);
+
+    if (hotel.address) {
+      doc.text(`📍 ${hotel.address}`, margins.left, yPosition);
+      yPosition += 6;
+    }
+
+    if (hotel.description) {
+      const lines = doc.splitTextToSize(hotel.description, contentWidth);
+      doc.text(lines, margins.left, yPosition);
+      yPosition += lines.length * 5 + 5;
+    }
+
+    // Amenities
+    if (hotel.amenities && hotel.amenities.length > 0) {
+      doc.setFont(undefined, "bold");
+      doc.text("Amenities:", margins.left, yPosition);
+      yPosition += 6;
+
+      doc.setFont(undefined, "normal");
+      const amenitiesText = hotel.amenities.join(" • ");
+      const amenitiesLines = doc.splitTextToSize(amenitiesText, contentWidth);
+      doc.text(amenitiesLines, margins.left, yPosition);
+      yPosition += amenitiesLines.length * 5 + 10;
+    }
+  }
+
+  drawDivider();
+
+  // Activities Section
+  addNewPageIfNeeded(60);
+  doc.setFontSize(14);
+  doc.setFont(undefined, "bold");
+  doc.setTextColor(30, 30, 30);
+  doc.text("Planned Activities", margins.left, yPosition);
+  yPosition += 10;
+
+  if (tripData.Activities && tripData.Activities.length > 0) {
+    tripData.Activities.forEach((activity, index) => {
+      addNewPageIfNeeded(25);
+
+      doc.setFontSize(10);
+      doc.setFont(undefined, "normal");
+      doc.setTextColor(107, 114, 128);
+
+      // Activity name
+      const activityText =
+        typeof activity === "object" ? activity.name : activity;
+      doc.text(`${index + 1}. ${activityText}`, margins.left, yPosition);
+      yPosition += 6;
+
+      // Activity details if available
+      if (typeof activity === "object") {
+        if (activity.duration) {
+          doc.setFontSize(9);
+          doc.text(
+            `   Duration: ${activity.duration}`,
+            margins.left + 5,
+            yPosition
+          );
+          yPosition += 5;
+        }
+        if (activity.price) {
+          doc.text(`   Price: $${activity.price}`, margins.left + 5, yPosition);
+          yPosition += 5;
+        }
+        if (activity.childFriendly) {
+          doc.setTextColor(16, 185, 129);
+          doc.text(`   ✓ Family Friendly`, margins.left + 5, yPosition);
+          doc.setTextColor(107, 114, 128);
+          yPosition += 5;
+        }
+      }
+      yPosition += 3;
+    });
+  }
+
+  // Weather Forecast
+  if (tripData.Weather && tripData.Weather.length > 0) {
+    addNewPageIfNeeded(80);
+    drawDivider();
+
+    doc.setFontSize(14);
+    doc.setFont(undefined, "bold");
+    doc.setTextColor(30, 30, 30);
+    doc.text("Weather Forecast", margins.left, yPosition);
+    yPosition += 10;
+
+    doc.setFontSize(9);
+    doc.setFont(undefined, "normal");
+
+    tripData.Weather.forEach((day) => {
+      addNewPageIfNeeded(20);
+
+      // Day header
+      doc.setFont(undefined, "bold");
+      doc.text(day.day, margins.left, yPosition);
+
+      // Weather info
+      doc.setFont(undefined, "normal");
+      const weatherInfo = `${day.condition} • High: ${day.high}°C • Low: ${day.low}°C`;
+      doc.text(weatherInfo, margins.left + 30, yPosition);
+      yPosition += 6;
+    });
+  }
 
   // Footer
-  y += 10;
-  if (y > 260) {
-    doc.addPage();
-    y = 20;
-  }
+  addNewPageIfNeeded(40);
+  yPosition = pageHeight - 30;
+  drawDivider();
 
-  doc.setFontSize(9);
+  doc.setFontSize(8);
   doc.setTextColor(156, 163, 175);
-  doc.text("Generated by AI Travel Planner", 20, y);
-  doc.text(new Date().toLocaleDateString(), 20, y + 5);
+  doc.text("Generated by AI Travel Planner", pageWidth / 2, yPosition, {
+    align: "center",
+  });
+  doc.text(
+    `Document created on ${new Date().toLocaleDateString()}`,
+    pageWidth / 2,
+    yPosition + 5,
+    { align: "center" }
+  );
 
   // Save the PDF
-  const destination = (trip.Destination || trip.destination || "Trip")
-    .replace(/[^a-z0-9]/gi, "-")
-    .toLowerCase();
-  doc.save(`${destination}-itinerary.pdf`);
-};
+  const fileName = `AI-Travel-${tripData.Destination?.replace(/\s+/g, "-") || "Trip"}-Itinerary.pdf`;
+  doc.save(fileName);
+}
 
-// Export individual sections for custom PDF generation
-export const addHeaderToPDF = (doc, trip, startY = 20) => {
-  doc.setFontSize(24);
-  doc.setTextColor(102, 126, 234);
-  doc.text("Trip Itinerary", 20, startY);
+// Helper function to draw flight cards
+function drawFlightCard(doc, flight, title, margins, yPos, contentWidth) {
+  const cardHeight = 40;
 
-  if (trip._id) {
-    doc.setFontSize(10);
-    doc.setTextColor(107, 114, 128);
-    doc.text(`Booking Reference: ${trip._id}`, 20, startY + 10);
+  // Card background
+  doc.setFillColor(248, 250, 252);
+  doc.roundedRect(margins.left, yPos, contentWidth, cardHeight, 3, 3, "F");
+
+  // Flight title
+  doc.setFontSize(10);
+  doc.setFont(undefined, "bold");
+  doc.setTextColor(30, 30, 30);
+  doc.text(title, margins.left + 5, yPos + 8);
+
+  // Flight details
+  doc.setFont(undefined, "normal");
+  doc.setTextColor(107, 114, 128);
+  doc.setFontSize(9);
+
+  // Route
+  doc.text(`Route: ${flight.route}`, margins.left + 5, yPos + 16);
+
+  // Times
+  doc.text(`Departure: ${flight.departure}`, margins.left + 5, yPos + 23);
+  doc.text(`Arrival: ${flight.arrival}`, margins.left + 80, yPos + 23);
+
+  // Duration and airline
+  doc.text(`Duration: ${flight.duration}`, margins.left + 5, yPos + 30);
+  doc.text(
+    `${flight.airline} - ${flight.flightNumber}`,
+    margins.left + 80,
+    yPos + 30
+  );
+
+  // Aircraft
+  if (flight.aircraft) {
+    doc.text(`Aircraft: ${flight.aircraft}`, margins.left + 5, yPos + 37);
+  }
+}
+
+// Helper function to format dates
+function formatDate(dateString) {
+  if (!dateString) return "TBD";
+  const date = new Date(dateString);
+  return date.toLocaleDateString("en-US", {
+    weekday: "short",
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}
+
+// API endpoint for PDF generation
+// pages/api/generate-pdf.js
+import { generateItineraryPDF } from "../../utils/generateItineraryPDF";
+
+export default async function handler(req, res) {
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Method not allowed" });
   }
 
-  return startY + (trip._id ? 25 : 15);
-};
+  try {
+    const { tripData } = req.body;
 
-export const addDestinationToPDF = (doc, trip, startY) => {
-  doc.setFontSize(20);
-  doc.setTextColor(31, 41, 55);
-  doc.text(trip.Destination || trip.destination, 20, startY);
-  return startY + 15;
-};
+    if (!tripData) {
+      return res.status(400).json({ error: "Trip data is required" });
+    }
 
-export const addDatesToPDF = (doc, trip, startY) => {
-  const formatDate = (dateStr) => {
-    return new Date(dateStr).toLocaleDateString("en-US", {
-      weekday: "short",
-      month: "long",
-      day: "numeric",
-      year: "numeric",
-    });
-  };
+    // Generate PDF buffer
+    const pdfBuffer = await generatePDFBuffer(tripData);
 
-  const startDate = trip.StartDate || trip.startDate;
-  const endDate = trip.EndDate || trip.endDate;
-  const start = formatDate(startDate);
-  const end = formatDate(endDate);
-
-  doc.setFontSize(12);
-  doc.setTextColor(75, 85, 99);
-  doc.text(`Dates: ${start} - ${end}`, 20, startY);
-  doc.text(`Duration: ${trip.Duration || trip.duration}`, 20, startY + 8);
-
-  return startY + 20;
-};
-
-export const addPassengersToPDF = (doc, trip, startY) => {
-  if (!trip.passengers) return startY;
-
-  doc.setFontSize(14);
-  doc.setTextColor(31, 41, 55);
-  doc.text("Travelers:", 20, startY);
-
-  let y = startY + 8;
-  doc.setFontSize(12);
-  doc.setTextColor(75, 85, 99);
-
-  if (trip.passengers.adults) {
-    doc.text(`Adults: ${trip.passengers.adults}`, 25, y);
-    y += 8;
+    // Set headers for PDF download
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="trip-itinerary.pdf"`
+    );
+    res.send(pdfBuffer);
+  } catch (error) {
+    console.error("PDF generation error:", error);
+    res.status(500).json({ error: "Failed to generate PDF" });
   }
-  if (trip.passengers.children) {
-    doc.text(`Children: ${trip.passengers.children}`, 25, y);
-    y += 8;
-  }
-  if (trip.passengers.infants) {
-    doc.text(`Infants: ${trip.passengers.infants}`, 25, y);
-    y += 8;
-  }
+}
 
-  return y + 4;
-};
+// Helper function to generate PDF as buffer (for API response)
+async function generatePDFBuffer(tripData) {
+  const doc = new jsPDF();
+  // ... same PDF generation logic as above ...
 
-// Check if new page is needed
-export const checkNewPage = (doc, currentY, threshold = 240) => {
-  if (currentY > threshold) {
-    doc.addPage();
-    return 20;
-  }
-  return currentY;
-};
+  // Instead of saving, return as buffer
+  return doc.output("arraybuffer");
+}

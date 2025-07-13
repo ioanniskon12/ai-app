@@ -1,10 +1,11 @@
-// pages/api/book-trip.js - Fixed version with proper error handling
+// pages/api/book-trip.js - Complete file with rate limiting
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "./auth/[...nextauth]";
 import mongoose from "mongoose";
 import dbConnect from "@/lib/mongodb";
 import Booking from "@/models/Booking";
 import Stripe from "stripe";
+import { withRateLimit } from "../../lib/middleware/rateLimiter";
 
 // Initialize Stripe
 const stripe = process.env.STRIPE_SECRET_KEY
@@ -13,7 +14,7 @@ const stripe = process.env.STRIPE_SECRET_KEY
     })
   : null;
 
-export default async function handler(req, res) {
+async function bookTripHandler(req, res) {
   console.log("🔥 book-trip API called");
 
   // TEMPORARY FIX: Drop indexes on first run
@@ -152,173 +153,136 @@ export default async function handler(req, res) {
       updatedAt: new Date(),
     };
 
-    // 6. Save booking to database
+    // 6. Generate unique booking reference
+    const bookingRef = `AI-TRIP-${Date.now()}-${Math.random()
+      .toString(36)
+      .substr(2, 6)
+      .toUpperCase()}`;
+    bookingData.bookingReference = bookingRef;
+
+    console.log("📝 Creating booking with data:", {
+      ...bookingData,
+      hotel:
+        typeof bookingData.hotel === "string" ? bookingData.hotel : "object",
+    });
+
+    // 7. Create booking in database
     let savedBooking;
     try {
-      console.log("📝 Creating booking in database...");
-
-      // Remove weather temporarily to isolate issues
-      const { weather, ...bookingDataWithoutWeather } = bookingData;
-
-      // Generate unique tripId if not present
-      if (!bookingDataWithoutWeather.tripId) {
-        bookingDataWithoutWeather.tripId = `TRIP-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-      }
-
-      // Try to save without weather first
-      savedBooking = await Booking.create(bookingDataWithoutWeather);
+      const booking = new Booking(bookingData);
+      savedBooking = await booking.save();
       console.log("✅ Booking saved to database:", savedBooking._id);
     } catch (dbError) {
-      console.error("❌ Database save failed:", dbError);
-      console.error("❌ Full error:", JSON.stringify(dbError, null, 2));
+      console.error("❌ Database save error:", dbError);
 
-      // Handle duplicate index error specifically
-      if (dbError.code === 11000 || dbError.message?.includes("duplicate")) {
-        console.log("Attempting to handle duplicate index error...");
+      // Handle specific database errors
+      if (dbError.code === 11000) {
+        return res.status(409).json({
+          error: "Duplicate booking detected",
+          message: "A booking with these details already exists",
+          code: "DUPLICATE_BOOKING",
+        });
+      }
 
-        // Try saving with a unique identifier
-        try {
-          const uniqueBookingData = {
-            ...bookingData,
-            _id: new mongoose.Types.ObjectId(),
-            tripId: `TRIP-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-          };
-          delete uniqueBookingData.weather; // Remove weather for now
-
-          savedBooking = await Booking.create(uniqueBookingData);
-          console.log("✅ Booking saved with unique ID:", savedBooking._id);
-        } catch (retryError) {
-          console.error("❌ Retry also failed:", retryError);
-          return res.status(500).json({
-            error: "Database error - duplicate index issue",
-            message: "Please contact support",
-            code: "DUPLICATE_INDEX_ERROR",
-          });
-        }
-      } else if (dbError.name === "ValidationError") {
-        const validationErrors = Object.values(dbError.errors).map((err) => ({
-          field: err.path,
-          message: err.message,
-        }));
+      if (dbError.name === "ValidationError") {
         return res.status(400).json({
-          error: "Validation failed",
-          details: validationErrors,
+          error: "Invalid booking data",
+          message: dbError.message,
           code: "VALIDATION_ERROR",
+          details: Object.keys(dbError.errors),
         });
-      } else {
-        return res.status(500).json({
-          error: "Failed to create booking record",
-          message: dbError.message || "Database error occurred",
-          code: "DATABASE_ERROR",
-        });
-      }
-    }
-
-    // 7. Handle payment processing
-    // Check if Stripe is configured
-    if (!stripe) {
-      console.log("⚠️ Stripe not configured - Test mode");
-
-      // Update booking to completed for test mode
-      savedBooking.status = "confirmed";
-      savedBooking.paymentStatus = "test_mode";
-      await savedBooking.save();
-
-      return res.status(200).json({
-        success: true,
-        bookingId: savedBooking._id.toString(),
-        testMode: true,
-        message: "Booking created successfully (test mode)",
-      });
-    }
-
-    // 8. Create Stripe checkout session
-    try {
-      const lineItems = [
-        {
-          price_data: {
-            currency: "usd",
-            product_data: {
-              name: `Trip to ${trip.Destination}`,
-              description: `${trip.Duration} in ${trip.Month}`,
-              images: trip.destinationImage
-                ? [trip.destinationImage]
-                : [
-                    `https://source.unsplash.com/800x600/?${trip.Destination.split(",")[0]},travel`,
-                  ],
-            },
-            unit_amount: Math.round(totalPrice * 100), // Convert to cents
-          },
-          quantity: 1,
-        },
-      ];
-
-      // Add individual activities as line items
-      if (trip.selectedActivities && trip.selectedActivities.length > 0) {
-        trip.selectedActivities.forEach((activity) => {
-          lineItems.push({
-            price_data: {
-              currency: "usd",
-              product_data: {
-                name: activity.name,
-                description: `Activity in ${trip.Destination}`,
-              },
-              unit_amount: Math.round((activity.price || 0) * 100),
-            },
-            quantity: 1,
-          });
-        });
-      }
-
-      const stripeSession = await stripe.checkout.sessions.create({
-        payment_method_types: ["card"],
-        line_items: lineItems,
-        mode: "payment",
-        success_url: `${process.env.NEXTAUTH_URL}/success?booking_id=${savedBooking._id}&session_id={CHECKOUT_SESSION_ID}`,
-        cancel_url: `${process.env.NEXTAUTH_URL}/trip-builder?canceled=true`,
-        customer_email: email,
-        metadata: {
-          bookingId: savedBooking._id.toString(),
-          destination: trip.Destination,
-        },
-      });
-
-      // Update booking with Stripe session ID
-      savedBooking.stripeSessionId = stripeSession.id;
-      savedBooking.paymentUrl = stripeSession.url;
-      await savedBooking.save();
-
-      console.log("✅ Stripe checkout session created:", stripeSession.id);
-
-      return res.status(200).json({
-        success: true,
-        url: stripeSession.url,
-        bookingId: savedBooking._id.toString(),
-        sessionId: stripeSession.id,
-        message: "Redirecting to Stripe checkout...",
-        paymentMethod: "stripe",
-      });
-    } catch (stripeError) {
-      console.error("❌ Stripe error:", stripeError);
-
-      // Mark booking as failed
-      if (savedBooking) {
-        savedBooking.paymentStatus = "failed";
-        savedBooking.status = "pending_payment";
-        await savedBooking.save();
       }
 
       return res.status(500).json({
-        error: "Payment system unavailable",
+        error: "Failed to save booking",
+        message: "Could not save booking to database",
+        code: "DATABASE_SAVE_ERROR",
+      });
+    }
+
+    // 8. Create Stripe payment intent (if Stripe is configured)
+    let paymentIntent = null;
+    if (stripe) {
+      try {
+        paymentIntent = await stripe.paymentIntents.create({
+          amount: Math.round(totalPrice * 100), // Convert to cents
+          currency: "usd",
+          metadata: {
+            bookingId: savedBooking._id.toString(),
+            bookingReference: bookingRef,
+            userEmail: email,
+            destination: trip.Destination,
+          },
+          description: `AI Traveller booking for ${trip.Destination}`,
+        });
+
+        // Update booking with payment intent ID
+        await Booking.findByIdAndUpdate(savedBooking._id, {
+          stripePaymentIntentId: paymentIntent.id,
+        });
+
+        console.log("✅ Stripe payment intent created:", paymentIntent.id);
+      } catch (stripeError) {
+        console.error("❌ Stripe error:", stripeError);
+        // Don't fail the booking for Stripe errors, but log them
+      }
+    } else {
+      console.warn("⚠️ Stripe not configured - payment intent not created");
+    }
+
+    // 9. Return success response
+    return res.status(201).json({
+      success: true,
+      message: "Booking created successfully",
+      booking: {
+        id: savedBooking._id.toString(),
+        bookingReference: bookingRef,
+        destination: trip.Destination,
+        totalPrice: totalPrice,
+        status: "pending_payment",
+        email: email,
+        createdAt: savedBooking.createdAt,
+      },
+      payment: paymentIntent
+        ? {
+            clientSecret: paymentIntent.client_secret,
+            paymentIntentId: paymentIntent.id,
+          }
+        : null,
+      code: "BOOKING_SUCCESS",
+    });
+  } catch (error) {
+    console.error("❌ Book trip API error:", error);
+    console.error("❌ Error stack:", error.stack);
+
+    // Handle specific error types
+    if (error.name === "CastError") {
+      return res.status(400).json({
+        error: "Invalid data format",
+        message: "One or more fields contain invalid data",
+        code: "CAST_ERROR",
+      });
+    }
+
+    if (error.code === "ENOTFOUND" || error.code === "ECONNREFUSED") {
+      return res.status(503).json({
+        error: "Service unavailable",
         message:
-          "Unable to process payment at this time. Please try again later.",
+          "External service temporarily unavailable. Please try again later.",
+        code: "SERVICE_UNAVAILABLE",
+      });
+    }
+
+    if (error.type === "StripeCardError") {
+      return res.status(400).json({
+        error: "Payment failed",
+        message:
+          error.message ||
+          "Payment could not be processed. Please try again later.",
         code: "STRIPE_ERROR",
         bookingId: savedBooking?._id?.toString(),
       });
     }
-  } catch (error) {
-    console.error("❌ Book trip API error:", error);
-    console.error("❌ Error stack:", error.stack);
 
     return res.status(500).json({
       error: "Failed to create booking",
@@ -327,6 +291,13 @@ export default async function handler(req, res) {
     });
   }
 }
+
+// Export with rate limiting - 30 requests per hour for booking
+export default withRateLimit(bookTripHandler, {
+  requests: 30,
+  window: 3600000, // 1 hour
+  blockDuration: 600000, // 10 minutes
+});
 
 export const config = {
   api: {
