@@ -611,7 +611,7 @@ export default function FAQPage() {
                 <FiSearch
                   style={{
                     fontSize: "3rem",
-                    marginBottom: "1rem",
+                    marginBottom: "2rem",
                     opacity: 0.5,
                   }}
                 />
